@@ -1,8 +1,9 @@
 -- File: ClickLinks.lua
 -- Name: Click Links
--- Author: tannerng
+-- Original Author: tannerng
+-- Updated by : Milestorme
 -- Description: Makes URLs clickable
--- Version: 1.0.9 (Fully fixed for Classic 1.15.8.64907)
+-- Version: 1.0.10 (Fully fixed for Classic 1.15.8 and Retail 11.2.7)
 
 URL_PATTERNS = {
     -- X://Y most urls
