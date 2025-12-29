@@ -1,9 +1,9 @@
 -- File: ClickLinks.lua
--- Name: Click Links Continued
+-- Name: Click Links
 -- Original Author: tannerng
 -- Updated by : Milestorme
 -- Description: Makes URLs clickable
--- Version: 1.0.10 (Fully fixed working on all game versions)
+-- Version: 1.0.12 (Fully fixed working on all game versions)
 
 URL_PATTERNS = {
     -- X://Y most urls

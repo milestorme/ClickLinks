@@ -3,7 +3,7 @@
 ## Original Author: tannerng
 ## Updated by: Milestorme
 ## Notes: Makes URLs clickable
-## Version: 1.0.10
+## Version: 1.0.12
 ClickLinks.lua
 
 
