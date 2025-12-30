@@ -1,9 +1,9 @@
 -- File: ClickLinks.lua
 -- Name: Click Links
 -- Original Author: tannerng
--- Updated by : Milestorme
+-- Continued by : Milestorme
 -- Description: Makes URLs clickable + automatic version checking
--- Version: 1.0.17
+-- Version: 1.0.18
 
 URL_PATTERNS = {
     -- X://Y most urls
@@ -48,7 +48,7 @@ end
 -- StaticPopup for copying URLs
 -------------------------------------------------
 StaticPopupDialogs["CLICK_LINK_CLICKURL"] = {
-    text = "Copy & Paste the link into your browser",
+    text = "Press Ctrl+C to copy link",
     button1 = CLOSE,
     timeout = 0,
     whileDead = true,
