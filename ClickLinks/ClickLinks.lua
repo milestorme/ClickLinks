@@ -3,7 +3,7 @@
 -- Original Author: tannerng
 -- Continued by : Milestorme
 -- Description: Makes URLs clickable + automatic version checking
--- Version: 1.0.18
+-- Version: 1.0.19
 
 URL_PATTERNS = {
     -- X://Y most urls
@@ -142,6 +142,24 @@ C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("CHAT_MSG_ADDON")
+f:RegisterEvent("GROUP_ROSTER_UPDATE")
+
+-- Track whether we already sent version to current group/raid
+local sentVersionThisGroup = false
+
+local function SendVersionToGroup()
+    if IsInGuild() then
+        C_ChatInfo.SendAddonMessage(PREFIX, localVersion, "GUILD")
+    end
+    if IsInRaid() or IsInGroup() then
+        -- Only send once per group/raid session
+        if not sentVersionThisGroup then
+            local channel = IsInRaid() and "RAID" or "PARTY"
+            C_ChatInfo.SendAddonMessage(PREFIX, localVersion, channel)
+            sentVersionThisGroup = true
+        end
+    end
+end
 
 f:SetScript("OnEvent", function(_, event, prefix, message)
     if event == "PLAYER_LOGIN" then
