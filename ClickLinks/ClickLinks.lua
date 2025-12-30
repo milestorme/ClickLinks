@@ -3,24 +3,32 @@
 -- Original Author: tannerng
 -- Updated by : Milestorme
 -- Description: Makes URLs clickable + automatic version checking
--- Version: 1.0.16
+-- Version: 1.0.17
 
 URL_PATTERNS = {
+    -- X://Y most urls
     "^(%a[%w+.-]+://%S+)",
     "%f[%S](%a[%w+.-]+://%S+)",
+    -- www.X.Y domain and path
     "^(www%.[-%w_%%]+%.(%a%a+)/%S+)",
     "%f[%S](www%.[-%w_%%]+%.(%a%a+)/%S+)",
+    -- www.X.Y domain
     "^(www%.[-%w_%%]+%.(%a%a+))",
     "%f[%S](www%.[-%w_%%]+%.(%a%a+))",
+    -- emaild
     "(%S+@[%w_.-%%]+%.(%a%a+))",
-    "^(https?://discord%.gg/%S*)",
-    "%f[%S](https?://discord%.gg/%S*)",
-    "^(discord%.gg/%S*)",
-    "%f[%S](discord%.gg/%S*)",
-    "^(https?://twitch%.tv/%S*)",
-    "%f[%S](https?://twitch%.tv/%S*)",
-    "^(twitch%.tv/%S*)",
-    "%f[%S](twitch%.tv/%S*)",
+    -- ip address with port and path
+    "^([0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d:[0-6]?%d?%d?%d?%d/%S+)",
+    "%f[%S]([0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d:[0-6]?%d?%d?%d?%d/%S+)",
+    -- ip address with port
+    "^([0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d:[0-6]?%d?%d?%d?%d)%f[%D]",
+    "%f[%S]([0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d:[0-6]?%d?%d?%d?%d)%f[%D]",
+    -- ip address with path
+    "^([0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%/%S+)",
+    "%f[%S]([0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%/%S+)",
+    -- ip address
+    "^([0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d)%f[%D]",
+    "%f[%S]([0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d%.[0-2]?%d?%d)%f[%D]"
 }
 
 local function formatURL(url)
@@ -74,8 +82,27 @@ end
 -- Chat Filters
 -------------------------------------------------
 local CHAT_TYPES = {
-    "AFK","BATTLEGROUND","BN_WHISPER","CHANNEL","DND","EMOTE",
-    "GUILD","OFFICER","PARTY","RAID","SAY","WHISPER","YELL","SYSTEM"
+    "AFK",
+    "BATTLEGROUND_LEADER",
+    "BATTLEGROUND",
+    "BN_WHISPER",
+    "BN_WHISPER_INFORM",
+    "CHANNEL",
+    "COMMUNITIES_CHANNEL",
+    "DND",
+    "EMOTE",
+    "GUILD",
+    "OFFICER",
+    "PARTY_LEADER",
+    "PARTY",
+    "RAID_LEADER",
+    "RAID_WARNING",
+    "RAID",
+    "SAY",
+    "WHISPER",
+    "WHISPER_INFORM",
+    "YELL",
+    "SYSTEM"
 }
 
 for _, chatType in pairs(CHAT_TYPES) do
