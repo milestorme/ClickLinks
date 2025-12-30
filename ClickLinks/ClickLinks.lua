@@ -163,16 +163,16 @@ end
 
 f:SetScript("OnEvent", function(_, event, prefix, message)
     if event == "PLAYER_LOGIN" then
-        if IsInGuild() then
-            C_ChatInfo.SendAddonMessage(PREFIX, localVersion, "GUILD")
+        SendVersionToGroup()
+    elseif event == "GROUP_ROSTER_UPDATE" then
+        -- Reset flag if you left the group/raid
+        if not IsInGroup() and not IsInRaid() then
+            sentVersionThisGroup = false
+        else
+            SendVersionToGroup()
         end
-        if IsInGroup() then
-            C_ChatInfo.SendAddonMessage(PREFIX, localVersion, "PARTY")
-        end
-		if IsInRaid() then
-			C_ChatInfo.SendAddonMessage(PREFIX, localVersion, "RAID")
-		end
     elseif event == "CHAT_MSG_ADDON" and prefix == PREFIX then
+        -- Only process messages from players who have the addon (prefix ensures that)
         local remoteVerNum = VersionToNumber(message)
         if remoteVerNum > localVerNum and not ClickLinksDB.warned then
             ClickLinksDB.warned = true
