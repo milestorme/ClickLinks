@@ -5,7 +5,7 @@
 ## Original Author: tannerng
 ## Continued by: Milestorme
 ## Notes: Makes URLs clickable
-## Version: 1.0.19
+## Version: 1.1.0
 ClickLinks.lua
 
 
