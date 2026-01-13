@@ -5,6 +5,8 @@
 -- Description: Makes URLs clickable + automatic version checking
 -- notes: Adds clickable URL links to chat, plus in-game version announcement + one-time update warning.
 
+local ADDON_NAME = ...
+
 -------------------------------------------------
 -- FUNCTION INDEX
 -------------------------------------------------
@@ -117,6 +119,47 @@ for _, chatType in ipairs(CHAT_TYPES) do
     ChatFrame_AddMessageEventFilter("CHAT_MSG_" .. chatType, makeClickable)
 end
 
+
+-------------------------------------------------
+-- Ensure system-style messages (e.g. GUILD_MOTD) also get clickable URLs
+-------------------------------------------------
+-- notes: Some messages (guild MOTD, addon prints, certain system lines) are written directly via ChatFrame:AddMessage
+-- notes: and do NOT go through CHAT_MSG_* filters. We wrap AddMessage to catch those too.
+local function HookChatFramesForClickableURLs()
+    if not _G.ChatFrame1 then return end
+
+    for i = 1, (NUM_CHAT_WINDOWS or 0) do
+        local cf = _G["ChatFrame" .. i]
+        if cf and not cf.__ClickLinksHooked then
+            cf.__ClickLinksHooked = true
+
+            local origAddMessage = cf.AddMessage
+            cf.AddMessage = function(self, text, ...)
+                if type(text) == "string" then
+                    -- Reuse the same safety rules as makeClickable:
+                    -- 1) Do not touch existing hyperlinks
+                    -- 2) Only process if it looks like it contains a URL/email/IP
+                    if not text:find("|H") then
+                        -- makeClickable returns (false, msg, ...) because it's a filter; we only need the transformed msg.
+                        local _, newText = makeClickable(self, "ADD_MESSAGE", text, ...)
+                        text = newText or text
+                    end
+                end
+                return origAddMessage(self, text, ...)
+            end
+        end
+    end
+end
+
+-- Try immediately (addon load), and also after login in case chat frames are not fully built yet.
+HookChatFramesForClickableURLs()
+local __clHookFrame = CreateFrame("Frame")
+__clHookFrame:RegisterEvent("PLAYER_LOGIN")
+__clHookFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+__clHookFrame:SetScript("OnEvent", function()
+    HookChatFramesForClickableURLs()
+end)
+
 -------------------------------------------------
 -- StaticPopup for copying URLs
 -------------------------------------------------
@@ -142,12 +185,16 @@ StaticPopupDialogs["CLICK_LINK_CLICKURL"] = {
     end,
 }
 
+local _AddToJournal -- forward declared (used by ItemRefTooltip hook)
+
 local OriginalSetHyperlink = ItemRefTooltip.SetHyperlink
 function ItemRefTooltip:SetHyperlink(link)
     -- notes: Hook ItemRefTooltip hyperlink handler.
     -- notes: Intercepts our custom "url:" hyperlinks and shows copy popup; otherwise passes through.
     if link:match("^url:") then
-        StaticPopup_Show("CLICK_LINK_CLICKURL", nil, nil, { url = link:sub(5) })
+        local u = link:sub(5)
+        _AddToJournal(u)
+        StaticPopup_Show("CLICK_LINK_CLICKURL", nil, nil, { url = u })
     else
         OriginalSetHyperlink(self, link)
     end
@@ -156,15 +203,285 @@ end
 -------------------------------------------------
 -- Automatic Version Check
 -------------------------------------------------
-local ADDON_NAME = ...
 local PREFIX = "CLICKLINKS_VER"
 
 -- notes: SavedVariables: stores a one-time warning flag so users don't get spammed repeatedly.
 ClickLinksDB = ClickLinksDB or { warned = false }
 
+-- ------------------------------------------------
+-- Journal + Minimap Button (Saved clicked links)
+-- ------------------------------------------------
+-- notes:
+--   ClickLinksDB.journal: array of { url = "...", t = time() }
+--   ClickLinksDB.minimap: { hide = false, angle = 220 }
+--   Use /cl journal (or minimap button) to open the journal.
+
+ClickLinksDB.journal = ClickLinksDB.journal or {}
+ClickLinksDB.journalMax = ClickLinksDB.journalMax or 200
+ClickLinksDB.minimap = ClickLinksDB.minimap or { hide = false, angle = 220 }
+
+local function _TrimJournal()
+    local maxKeep = tonumber(ClickLinksDB.journalMax) or 200
+    if maxKeep < 10 then maxKeep = 10 end
+    local j = ClickLinksDB.journal
+    local extra = #j - maxKeep
+    if extra > 0 then
+        for i = 1, extra do
+            table.remove(j, 1)
+        end
+    end
+end
+
+local function _ClearJournal()
+    local j = ClickLinksDB.journal
+    for i = #j, 1, -1 do
+        j[i] = nil
+    end
+end
+
+_AddToJournal = function(url)
+    url = tostring(url or ""):gsub("%s+$", ""):gsub("^%s+", "")
+    if url == "" then return end
+
+    local j = ClickLinksDB.journal
+    local last = j[#j]
+    if last and last.url == url then
+        last.t = time()
+        return
+    end
+
+    j[#j + 1] = { url = url, t = time() }
+    _TrimJournal()
+    if JournalFrame and JournalFrame:IsShown() then
+        _UpdateJournalUI()
+    end
+end
+
+-- ---- Journal UI ----
+local JournalFrame, JournalScrollChild, JournalButtons = nil, nil, nil
+local _UpdateJournalUI  -- forward declaration (used by Clear All button and journal actions)
+
+local function _FormatTime(ts)
+    if type(date) == "function" and ts then
+        return date("%Y-%m-%d %H:%M", ts)
+    end
+    return ""
+end
+
+local function _EnsureJournalUI()
+    if JournalFrame then return end
+
+    local template = (BackdropTemplateMixin and "BackdropTemplate") or nil
+    JournalFrame = CreateFrame("Frame", "ClickLinks_JournalFrame", UIParent, template)
+    JournalFrame:SetSize(520, 420)
+    JournalFrame:SetPoint("CENTER")
+    JournalFrame:SetFrameStrata("DIALOG")
+    JournalFrame:EnableMouse(true)
+    JournalFrame:SetMovable(true)
+    JournalFrame:RegisterForDrag("LeftButton")
+    JournalFrame:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    JournalFrame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    JournalFrame:Hide()
+
+    if JournalFrame.SetBackdrop then
+        JournalFrame:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+        JournalFrame:SetBackdropColor(0, 0, 0, 0.95)
+    end
+
+    local title = JournalFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOP", 0, -10)
+    title:SetText("Click Links - Journal")
+
+    local hint = JournalFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    hint:SetPoint("TOP", title, "BOTTOM", 0, -6)
+    hint:SetText("Left-click an entry to copy. Right-click to remove.")
+
+    local close = CreateFrame("Button", nil, JournalFrame, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", -2, -2)
+
+    local clear = CreateFrame("Button", nil, JournalFrame, "UIPanelButtonTemplate")
+    clear:SetSize(90, 22)
+    clear:SetPoint("TOPRIGHT", -38, -28)
+    clear:SetText((L and L.CLEAR_ALL) or "Clear All")
+    clear:SetScript("OnClick", function()
+        -- Confirm before wiping the entire journal (prevents misclicks)
+        StaticPopupDialogs["CLICKLINKS_CLEAR_JOURNAL_CONFIRM"] = StaticPopupDialogs["CLICKLINKS_CLEAR_JOURNAL_CONFIRM"] or {
+            text = (L and L.CLEAR_ALL_CONFIRM) or "Clear all saved links?",
+            button1 = (L and L.OK) or OKAY,
+            button2 = (L and L.CANCEL) or CANCEL,
+            OnAccept = function()
+                _ClearJournal()
+                if JournalFrame and JournalFrame:IsShown() and _UpdateJournalUI then
+                    _UpdateJournalUI()
+                end
+            end,
+            timeout = 0,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+        }
+        StaticPopup_Show("CLICKLINKS_CLEAR_JOURNAL_CONFIRM")
+    end)
+
+
+    local scroll = CreateFrame("ScrollFrame", "ClickLinks_JournalScrollFrame", JournalFrame, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 16, -58)
+    scroll:SetPoint("BOTTOMRIGHT", -34, 16)
+
+    JournalScrollChild = CreateFrame("Frame", nil, scroll)
+    JournalScrollChild:SetSize(1, 1)
+    scroll:SetScrollChild(JournalScrollChild)
+
+    JournalButtons = {}
+end
+
+_UpdateJournalUI = function()
+    if not JournalFrame or not JournalFrame:IsShown() then return end
+    _EnsureJournalUI()
+
+    local j = ClickLinksDB.journal
+    local rowH = 20
+    local width = 460
+
+    for i = 1, #JournalButtons do
+        JournalButtons[i]:Hide()
+    end
+
+    for i = #j, 1, -1 do
+        local idx = #j - i + 1  -- 1..#j newest first
+        local btn = JournalButtons[idx]
+        if not btn then
+            btn = CreateFrame("Button", nil, JournalScrollChild)
+            btn:SetHeight(rowH)
+            btn:SetWidth(width)
+            btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            btn.text:SetPoint("LEFT", 2, 0)
+            btn.text:SetJustifyH("LEFT")
+            btn.text:SetWidth(width - 4)
+            btn.text:SetWordWrap(false)
+
+            btn:SetHighlightTexture("Interface/QuestFrame/UI-QuestTitleHighlight")
+            btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+            btn:SetScript("OnClick", function(self, button)
+                local url = self._url
+                if not url then return end
+                if button == "RightButton" then
+                    -- remove the first matching entry (newest-first is fine)
+                    for k = #ClickLinksDB.journal, 1, -1 do
+                        if ClickLinksDB.journal[k] and ClickLinksDB.journal[k].url == url then
+                            table.remove(ClickLinksDB.journal, k)
+                            break
+                        end
+                    end
+                    _UpdateJournalUI()
+                else
+                    StaticPopup_Show("CLICK_LINK_CLICKURL", nil, nil, { url = url })
+                end
+            end)
+
+            JournalButtons[idx] = btn
+        end
+
+        local entry = j[i]
+        local ts = _FormatTime(entry.t)
+        local display = entry.url or ""
+        if #display > 300 then display = display:sub(1, 300) .. "..." end
+
+        btn._url = entry.url
+        btn.text:SetText((ts ~= "" and ("|cffaaaaaa" .. ts .. "|r  ") or "") .. display)
+        btn:ClearAllPoints()
+        btn:SetPoint("TOPLEFT", 0, -((idx - 1) * rowH))
+        btn:Show()
+    end
+
+    JournalScrollChild:SetHeight(math.max(1, (#j) * rowH))
+end
+
+local function ToggleJournal()
+    _EnsureJournalUI()
+    if JournalFrame:IsShown() then
+        JournalFrame:Hide()
+    else
+        JournalFrame:Show()
+        _UpdateJournalUI()
+    end
+end
+
+-- ---- Minimap button (LibDBIcon-1.0) ----
+-- notes:
+--   Uses LibDataBroker + LibDBIcon for a standard, drag-to-move minimap icon.
+--   SavedVariables:
+--     ClickLinksDB.minimap = { hide = false, minimapPos = 220 }
+--   (Older builds used `angle`; we migrate it to `minimapPos` automatically.)
+
+-- Forward declaration:
+-- The minimap icon's OnClick closure is created before the localization table is assigned.
+-- If we declare L later with `local L = {...}`, the closure binds to a GLOBAL 'L' (nil).
+-- Declaring it here makes L a local upvalue and fixes RightButton errors.
+local L
+
+local DBIcon = nil
+local LDB = nil
+local LDBObj = nil
+
+local function _InitMinimap()
+    if DBIcon and LDBObj then return end
+    if type(LibStub) ~= "table" or type(LibStub.GetLibrary) ~= "function" then return end
+
+    DBIcon = LibStub:GetLibrary("LibDBIcon-1.0", true)
+    LDB = LibStub:GetLibrary("LibDataBroker-1.1", true)
+    if not (DBIcon and LDB) then return end
+
+    ClickLinksDB.minimap = ClickLinksDB.minimap or { hide = false, minimapPos = 220 }
+
+    -- migrate legacy key
+    if ClickLinksDB.minimap.angle and not ClickLinksDB.minimap.minimapPos then
+        ClickLinksDB.minimap.minimapPos = ClickLinksDB.minimap.angle
+    end
+    ClickLinksDB.minimap.angle = nil
+
+    LDBObj = LDB:NewDataObject("ClickLinks", {
+        type = "launcher",
+        icon = "Interface/ICONS/INV_Misc_Note_04",
+        OnClick = function()
+            ToggleJournal()
+        end,
+        OnTooltipShow = function(tt)
+            tt:AddLine("Click Links", 0.08, 0.63, 0.85)
+            tt:AddLine("Left-click: Journal", 1, 1, 1)
+            tt:AddLine("Right-click: Version", 1, 1, 1)
+            tt:AddLine("Drag: Move", 1, 1, 1)
+        end,
+    })
+
+    DBIcon:Register("ClickLinks", LDBObj, ClickLinksDB.minimap)
+    if ClickLinksDB.minimap.hide then
+        DBIcon:Hide("ClickLinks")
+    end
+end
+
+local function ToggleMinimapButton()
+    ClickLinksDB.minimap = ClickLinksDB.minimap or { hide = false, minimapPos = 220 }
+    ClickLinksDB.minimap.hide = not ClickLinksDB.minimap.hide
+    _InitMinimap()
+    if DBIcon then
+        if ClickLinksDB.minimap.hide then
+            DBIcon:Hide("ClickLinks")
+        else
+            DBIcon:Show("ClickLinks")
+        end
+    end
+end
+
 -- notes: Localization-ready strings (single table).
-local L = {
+L = {
     ADDON_NAME = "Click Links",
+    CLEAR_ALL = "Clear All",
     UPDATE_AVAILABLE = "A newer version is available.",
     YOUR_VERSION = "Your version:",
     NEWER_VERSION = "Newer version detected:",
@@ -173,7 +490,10 @@ local L = {
 }
 
 -- notes: Reads the addon Version field from the TOC metadata.
-local localVersion = ((C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata)(ADDON_NAME, "Version") or "0"
+local localVersion = ( (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata )(ADDON_NAME, "Version")
+    or ( (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata )("ClickLinks", "Version")
+    or "0"
+localVersion = tostring(localVersion)
 
 local function VersionToNumber(ver)
     -- notes: Converts semantic X.Y.Z into an integer so versions can be compared numerically.
@@ -218,6 +538,7 @@ f:SetScript("OnEvent", function(_, event, prefix, message)
     if event == "PLAYER_LOGIN" then
         -- notes: On login, announce version to guild and current group (if any).
         SendVersionToGroup()
+        _InitMinimap()
 
     elseif event == "GROUP_ROSTER_UPDATE" then
         -- notes: When group changes:
@@ -249,14 +570,23 @@ SLASH_CLICKLINKS1 = "/clicklinks"
 SLASH_CLICKLINKS2 = "/cl"
 
 SlashCmdList["CLICKLINKS"] = function(msg)
-    -- notes: Slash handler. Supports: "version" and "ver" (short alias).
+    -- notes: Slash handler.
     msg = msg and msg:lower() or ""
 
     if msg == "version" or msg == "ver" then
         print("|cff149bfd" .. L.ADDON_NAME .. "|r")
         print("|cffffcc00" .. L.VERSION_CMD .. "|r", localVersion)
+
+    elseif msg == "journal" or msg == "log" then
+        ToggleJournal()
+
+    elseif msg == "minimap" then
+        ToggleMinimapButton()
+
     else
         print("|cff149bfd" .. L.ADDON_NAME .. "|r")
         print("|cffffcc00/clicklinks version|r - Show addon version")
+        print("|cffffcc00/clicklinks journal|r - Open saved link journal")
+        print("|cffffcc00/clicklinks minimap|r - Toggle minimap button")
     end
 end
