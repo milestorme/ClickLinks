@@ -91,7 +91,7 @@ Click Links works in nearly all chat types, including:
 2. Extract into: `World of Warcraft/_retail_/Interface/AddOns/ClickLinks/`
 
 ### Manual / GitHub
-1. Download Release.zip
+1. Download [Release.zip](https://github.com/milestorme/ClickLinks/blob/main/Release.zip)
 2. Extract the `ClickLinks` folder into your `Interface/AddOns/` directory
 3. Ensure your folder looks like:
 
