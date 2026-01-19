@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.0.0
+- Added support for Midnight
+
 ## 1.1.9
 - Shortened tooltip strings for narrow tooltips
 - Improved non-English tooltip layout

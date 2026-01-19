@@ -2,7 +2,7 @@
 ## Title: Click Links
 ## Notes: Makes URLs clickable in chat and provides a clickable journal.
 ## Author: tannerng, Milestorme
-## Version: 1.1.9
+## Version: 2.0.0
 ## X-Locale: enUS
 ## X-Localizations: enUS, deDE, esES, esMX, frFR, itIT, jaJP, koKR, ptBR, ruRU, zhCN, zhTW
 ## X-Flavor: TitanForged
