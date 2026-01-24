@@ -20,3 +20,4 @@ L["UPDATE_AVAILABLE"] = "新しいバージョンがあります。"
 L["UPDATE_HINT"] = "CurseForge から更新してください。"
 L["VERSION_CMD"] = "アドオンのバージョン:"
 L["YOUR_VERSION"] = "現在のバージョン:"
+

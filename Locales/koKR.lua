@@ -20,3 +20,4 @@ L["UPDATE_AVAILABLE"] = "새 버전이 있습니다."
 L["UPDATE_HINT"] = "CurseForge에서 업데이트하세요."
 L["VERSION_CMD"] = "애드온 버전:"
 L["YOUR_VERSION"] = "내 버전:"
+

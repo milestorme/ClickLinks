@@ -19,3 +19,4 @@ L["UPDATE_AVAILABLE"] = "A newer version is available."
 L["UPDATE_HINT"] = "Please update via CurseForge."
 L["VERSION_CMD"] = "Addon version:"
 L["YOUR_VERSION"] = "Your version:"
+

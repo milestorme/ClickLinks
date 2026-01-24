@@ -333,44 +333,6 @@ ClickLinksDB.journal = ClickLinksDB.journal or {}
 ClickLinksDB.journalMax = ClickLinksDB.journalMax or 200
 ClickLinksDB.minimap = ClickLinksDB.minimap or { hide = false, angle = 220 }
 
--- ------------------------------------------------
--- Auto-disable in PvP instances (Retail 12.x safety)
--- ------------------------------------------------
--- notes:
---   In Retail 12.x, certain chat messages in PvP instances may carry "secret" values.
---   We automatically skip ClickLinks processing while in battlegrounds/arenas (and resume on exit).
---   Users can disable this behavior by setting ClickLinksDB.autoDisablePvP = false.
-
-ClickLinksDB.autoDisablePvP = (ClickLinksDB.autoDisablePvP ~= false)
-
-local ClickLinksRuntimeDisabled = false
-local function _CL_UpdateRuntimeDisabled()
-    if ClickLinksDB and ClickLinksDB.autoDisablePvP then
-        local inInstance, instanceType = IsInInstance()
-        ClickLinksRuntimeDisabled = inInstance and (instanceType == "pvp" or instanceType == "arena")
-    else
-        ClickLinksRuntimeDisabled = false
-    end
-end
-
--- Replace the forward stub with the real runtime flag.
-_CL_IsRuntimeDisabled = function()
-    return ClickLinksRuntimeDisabled
-end
-
-do
-    local f = CreateFrame("Frame")
-    f:RegisterEvent("PLAYER_ENTERING_WORLD")
-    f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
-    f:RegisterEvent("UPDATE_BATTLEFIELD_STATUS")
-    f:SetScript("OnEvent", function()
-        _CL_UpdateRuntimeDisabled()
-    end)
-    _CL_UpdateRuntimeDisabled()
-end
-
-
-
 -- ---- Journal data normalization ----
 -- notes:
 --   Older test builds (or manual edits) may leave the journal as a sparse table or with non-entry values.
@@ -589,7 +551,7 @@ _UpdateJournalUI = function()
             if #display > 300 then display = display:sub(1, 300) .. "..." end
 
             btn._url = entry.url
-            btn.text:SetText((ts ~= "" and ("|cffaaaaaa" .. ts .. "|r  ") or "") .. display)
+            btn.text:SetText((ts ~= "" and ("|cffaaaaaa" .. ts .. "|r  ") or "") .. "|cff00ccff" .. display .. "|r")
             btn:ClearAllPoints()
             btn:SetPoint("TOPLEFT", 0, -((idx - 1) * rowH))
             btn:Show()
@@ -770,10 +732,7 @@ SlashCmdList["CLICKLINKS"] = function(msg)
     elseif msg == "minimap" then
         ToggleMinimapButton()
 
-    elseif msg == "pvp" or msg == "bg" then
-        ClickLinksDB.autoDisablePvP = not (ClickLinksDB.autoDisablePvP == true)
-        _CL_UpdateRuntimeDisabled()
-        print("|cff149bfd" .. (L and L["ADDON_NAME"] or "ClickLinks") .. "|r: Auto-disable in PvP is now " .. (ClickLinksDB.autoDisablePvP and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
+    -- /cl pvp removed: PvP auto-disable no longer needed in Retail 12.x
 
     else
         print("|cff149bfd" .. L["ADDON_NAME"] .. "|r")
