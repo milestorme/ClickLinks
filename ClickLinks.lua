@@ -172,12 +172,68 @@ local function _CL_SafeMatch(s, pattern)
 end
 
 -------------------------------------------------
+-- Deferred message substitution for events with secret varargs
+-------------------------------------------------
+-- When a chat event carries secret values in its varargs (e.g. BN_WHISPER
+-- target), returning (false, newMsg, ...) from a filter taints every vararg
+-- with addon provenance, causing "attempt to perform string conversion on a
+-- secret string value" errors inside Blizzard code.
+--
+-- For these events we return nil from the filter (keeping all original args
+-- untainted) and instead stash the original->modified message mapping. The
+-- ChatFrame:AddMessage hook then applies the substitution to the formatted
+-- text before it reaches the screen.
+
+local _CL_PendingSubstitutions = {}  -- originalMsg -> modifiedMsg
+local _CL_PendingCleanupScheduled = false
+
+local function _CL_SchedulePendingCleanup()
+    if _CL_PendingCleanupScheduled then return end
+    _CL_PendingCleanupScheduled = true
+    -- Wipe stale entries at the end of the frame. By then all ChatFrame
+    -- AddMessage calls for the current event will have completed.
+    C_Timer.After(0, function()
+        wipe(_CL_PendingSubstitutions)
+        _CL_PendingCleanupScheduled = false
+    end)
+end
+
+-- Events whose varargs may contain secret values (12.x). Regular whispers
+-- are included: the sender can be secret, and returning it from a filter
+-- taints it, which then errors inside Blizzard's SetLastTellTarget
+-- ("attempt to perform string conversion on a secret string value").
+local _CL_SECRET_VARARG_EVENTS = {
+    CHAT_MSG_WHISPER             = true,
+    CHAT_MSG_WHISPER_INFORM      = true,
+    CHAT_MSG_BN_WHISPER          = true,
+    CHAT_MSG_BN_WHISPER_INFORM   = true,
+    CHAT_MSG_BN_CONVERSATION     = true,
+    CHAT_MSG_BN_INLINE_TOAST_ALERT     = true,
+    CHAT_MSG_BN_INLINE_TOAST_BROADCAST = true,
+    CHAT_MSG_COMMUNITIES_CHANNEL = true,
+    CHAT_MSG_CLUB                = true,
+    CHAT_MSG_CLUB_STREAM_MESSAGE = true,
+}
+
+-- Also detect at runtime: if issecretvalue() exists, probe the varargs.
+local function _CL_VarargsHaveSecret(...)
+    if not issecretvalue then return false end
+    for i = 1, select("#", ...) do
+        local v = select(i, ...)
+        if issecretvalue(v) then return true end
+    end
+    return false
+end
+
+-------------------------------------------------
 -- Chat message filter
 -------------------------------------------------
 local function makeClickable(self, event, msg, ...)
     -- notes: ChatFrame_AddMessageEventFilter callback.
     -- notes: Performs a cheap pre-check, then gsubs all URL patterns into clickable links.
-    -- notes: Returns (false, msg, ...) so the message continues through normal rendering.
+    -- notes: Returns (false, msg, ...) so the message continues through normal rendering,
+    -- notes: UNLESS the varargs contain secret values — in that case we defer the
+    -- notes: modification to the AddMessage hook to avoid tainting secret values.
 
     -- ElvUI has its own URL filter (CH:FindURL) that also produces |Hurl: links.
     -- If both run on the same message, ElvUI re-processes ClickLinks' already-formatted
@@ -230,6 +286,15 @@ local function makeClickable(self, event, msg, ...)
         return m
     end, msg)
     if ok and type(newMsg) == "string" and newMsg ~= msg then
+        -- Check whether the varargs carry secret values that would be tainted
+        -- by flowing through addon return values.  For known BNet events or
+        -- when issecretvalue() detects one, stash the modification for the
+        -- AddMessage hook and return nil to keep original args untainted.
+        if _CL_SECRET_VARARG_EVENTS[event] or _CL_VarargsHaveSecret(...) then
+            _CL_PendingSubstitutions[msg] = newMsg
+            _CL_SchedulePendingCleanup()
+            return
+        end
         return false, newMsg, ...
     end
     -- Message wasn't actually modified (e.g. bare "word.word" matched the
@@ -311,14 +376,37 @@ local function HookChatFramesForClickableURLs()
                 cf.__ClickLinks_OrigAddMessage = cf.AddMessage
                 cf.__ClickLinks_WrappedAddMessage = function(self, text, ...)
                     if _CL_CanTreatAsString(text) then
-                        -- Reuse the same safety rules as makeClickable:
-                        -- 1) Do not touch existing hyperlinks
-                        -- 2) Only process if it looks like it contains a URL/email/IP
-                        if not _CL_SafeFind(text, "|H", true) then
-                            -- makeClickable returns (false, msg, ...) because it's a filter; we only need the transformed msg.
-                            local ok, _, newText = _CL_SafeCall(makeClickable, self, "ADD_MESSAGE", text, ...)
-                            if ok and newText then
-                                text = newText
+                        -- Check for deferred substitutions from the chat
+                        -- filter (BN_WHISPER etc. where returning varargs
+                        -- would taint secret values).  The formatted text
+                        -- embeds the original message, so we can gsub the
+                        -- original -> modified mapping within it.
+                        local applied = false
+                        for origMsg, modMsg in next, _CL_PendingSubstitutions do
+                            -- Escape Lua pattern magic chars in the search pattern
+                            local escaped = origMsg:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+                            -- Escape % in the replacement so gsub doesn't
+                            -- interpret them as back-references
+                            local safeReplacement = modMsg:gsub("%%", "%%%%")
+                            local ok, result = pcall(string.gsub, text, escaped, safeReplacement, 1)
+                            if ok and result ~= text then
+                                text = result
+                                _CL_PendingSubstitutions[origMsg] = nil
+                                applied = true
+                                break
+                            end
+                        end
+
+                        if not applied then
+                            -- Reuse the same safety rules as makeClickable:
+                            -- 1) Do not touch existing hyperlinks
+                            -- 2) Only process if it looks like it contains a URL/email/IP
+                            if not _CL_SafeFind(text, "|H", true) then
+                                -- makeClickable returns (false, msg, ...) because it's a filter; we only need the transformed msg.
+                                local ok, _, newText = _CL_SafeCall(makeClickable, self, "ADD_MESSAGE", text, ...)
+                                if ok and newText then
+                                    text = newText
+                                end
                             end
                         end
                     end
@@ -367,6 +455,12 @@ local function _TryHookMessageFrame(frame)
 end
 
 HookCommunitiesFramesForClickableURLs = function()
+    -- 12.x (issecretvalue exists): don't replace the Communities chat frame's
+    -- AddMessage. The wrapper makes Blizzard's DisplayChat path run tainted,
+    -- and its internals (GetCommunitiesChannel) then error on secret club
+    -- values. Club-chat URLs lose clickability on modern clients; correctness
+    -- over the feature.
+    if issecretvalue then return end
     local cf = _G.CommunitiesFrame
     if not cf then return end
 
