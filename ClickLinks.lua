@@ -363,21 +363,63 @@ local function _CL_TryHookCommunitiesFrames()
     pcall(HookCommunitiesFramesForClickableURLs)
 end
 
--- The default chat frames are deliberately NOT hooked on 12.x. Replacing
--- cf.AddMessage puts an insecure function where secure code reads it:
--- Blizzard's Group Finder event handlers print via
--- ChatFrameUtil.DisplaySystemMessageInPrimary -> ChatFrame:AddMessage,
--- which taints that execution, and the LFGList results update then trips
--- secret-value comparisons:
---   "LFGList.lua:3236: attempt to compare a secret number value
---    (execution tainted by 'ClickLinks')" (12.0.7, in the wild).
--- There is no taint-safe way to rewrite text in direct AddMessage writes.
--- URLs arriving through CHAT_MSG_* events remain clickable via the
--- taint-safe message filters; only direct writes (guild MOTD, addon
--- prints) lose clickability.
 local function HookChatFramesForClickableURLs()
     if _CL_IsElvUIActive() then return end
     _CL_TryHookCommunitiesFrames()
+    if not _G.ChatFrame1 then return end
+
+    for i = 1, (NUM_CHAT_WINDOWS or 0) do
+        local cf = _G["ChatFrame" .. i]
+        if cf and type(cf.AddMessage) == "function" then
+            -- If another addon replaced AddMessage after our hook, re-hook safely.
+            if cf.AddMessage ~= cf.__ClickLinks_WrappedAddMessage then
+                cf.__ClickLinks_OrigAddMessage = cf.AddMessage
+                cf.__ClickLinks_WrappedAddMessage = function(self, text, ...)
+                    if _CL_CanTreatAsString(text) then
+                        -- Check for deferred substitutions from the chat
+                        -- filter (BN_WHISPER etc. where returning varargs
+                        -- would taint secret values).  The formatted text
+                        -- embeds the original message, so we can gsub the
+                        -- original -> modified mapping within it.
+                        local applied = false
+                        for origMsg, modMsg in next, _CL_PendingSubstitutions do
+                            -- Escape Lua pattern magic chars in the search pattern
+                            local escaped = origMsg:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+                            -- Escape % in the replacement so gsub doesn't
+                            -- interpret them as back-references
+                            local safeReplacement = modMsg:gsub("%%", "%%%%")
+                            local ok, result = pcall(string.gsub, text, escaped, safeReplacement, 1)
+                            if ok and result ~= text then
+                                text = result
+                                _CL_PendingSubstitutions[origMsg] = nil
+                                applied = true
+                                break
+                            end
+                        end
+
+                        if not applied then
+                            -- Reuse the same safety rules as makeClickable:
+                            -- 1) Do not touch existing hyperlinks
+                            -- 2) Only process if it looks like it contains a URL/email/IP
+                            if not _CL_SafeFind(text, "|H", true) then
+                                -- makeClickable returns (false, msg, ...) because it's a filter; we only need the transformed msg.
+                                local ok, _, newText = _CL_SafeCall(makeClickable, self, "ADD_MESSAGE", text, ...)
+                                if ok and newText then
+                                    text = newText
+                                end
+                            end
+                        end
+                    end
+                    local orig = self.__ClickLinks_OrigAddMessage
+                    if orig then
+                        return orig(self, text, ...)
+                    end
+                end
+
+                cf.AddMessage = cf.__ClickLinks_WrappedAddMessage
+            end
+        end
+    end
 end
 
 
