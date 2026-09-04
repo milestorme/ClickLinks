@@ -615,8 +615,23 @@ end
 -- Call once now, and again after other addons load (eg. ElvUI) to keep our hook active.
 _G.ClickLinks_EnsureSetItemRefHook()
 
--- (Optional) Keep the ItemRefTooltip hook as a secondary path for clients that call it directly.
-if ItemRefTooltip then
+-- Blizzard routes an unhandled link type through ItemRefTooltip, so a "url:" click
+-- would otherwise open an empty tooltip. Claim the link type where the client offers a
+-- registry: a replaced ItemRefTooltip:SetHyperlink runs insecurely inside Blizzard's own
+-- ItemRefSetHyperlink and taints the rest of it, which then errors on the secret tooltip
+-- geometry it compares. A registered handler only ever runs for our own links.
+if LinkUtil and LinkUtil.RegisterLinkHandler and LinkUtil.IsLinkHandlerRegistered
+   and not LinkUtil.IsLinkHandlerRegistered("url") then
+    LinkUtil.RegisterLinkHandler("url", function(link)
+        if type(link) == "string" then
+            local u = link:sub(5):gsub("||", "|")
+            _AddToJournal(u)
+            _CL_ShowCopyBox(u)
+        end
+        return LinkProcessorResponse.Handled
+    end)
+elseif ItemRefTooltip then
+-- Clients with no link handler registry still need the method replacement.
 local OriginalSetHyperlink = ItemRefTooltip.SetHyperlink
 function ItemRefTooltip:SetHyperlink(link)
     if type(link) == "string" and link:match("^url:") then
