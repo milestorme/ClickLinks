@@ -1,11 +1,5 @@
-## 2.2.2
-- Replacing cf.AddMessage puts an insecure function where secure code reads it. Blizzard's Group Finder event handlers print via ChatFrameUtil.DisplaySystemMessageInPrimary -> ChatFrame:AddMessage, tainting the execution; the subsequent LFGList results update then hits "attempt to compare a secret number value (execution tainted by 'ClickLinks')" at LFGList.lua:3236 (observed on 12.0.7).
-
-- URLs in normal chat events stay clickable through the existing taint-safe CHAT_MSG_* filters; only direct AddMessage writes (guild MOTD, addon prints) lose clickability, which is unavoidable - there is no taint-safe way to modify those. The Communities frame hook is unchanged.
-
 ## 2.2.1
-- Defer URL substitution to the AddMessage hook for events whose varargs can be secret (regular whispers, BNet, communities/club events), and probe varargs with issecretvalue() at runtime as a fallback. The filter returns nil for those events so the original args stay untainted; the AddMessage hook applies the original->modified mapping to the formatted line, so URLs remain clickable.
-- Skip wrapping the Communities chat frame's AddMessage entirely on 12.x clients (issecretvalue present): the wrapper makes Blizzard's DisplayChat path run tainted and error on secret club values. Club chat loses URL clickability on Retail; correctness over the feature.
+- Register a "url" link handler instead of replacing ItemRefTooltip:SetHyperlink
 
 ## 2.2.0
 - Only return modified args when message actually changed
